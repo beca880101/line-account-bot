@@ -56,17 +56,23 @@ def safe_eval_expr(expr: str) -> float:
 
 def parse_expr_and_memo(raw: str):
     """
-    模式 B：數字 / 算式直接接文字
+    模式 B：數字 / 算式直接接文字，但「一定要 + 或 - 開頭」才記帳
     例：
-      +200牛肉麵
-      -50交通費
-      -200*24.5-100*20晚餐
+      +200牛肉麵   ✅ 會記帳（+200）
+      -50交通費    ✅ 會記帳（-50）
+      100牛肉麵    ❌ 不記帳（當成普通文字）
+      我餓了       ❌ 不記帳
+
     前面連續的 +-*/().0-9 視為算式，後面全部是備註
     回傳：(delta: float, memo: str|None)
     """
     s = raw.strip()
     if not s:
         raise ValueError("empty")
+
+    # ⭐ 重點：沒有以 + 或 - 開頭就直接視為「不是記帳指令」
+    if s[0] not in "+-":
+        raise ValueError("no leading sign")
 
     allowed_chars = set("0123456789.+-*/()")
     expr_chars = []
@@ -75,20 +81,18 @@ def parse_expr_and_memo(raw: str):
         if ch in allowed_chars:
             expr_chars.append(ch)
         else:
-            # 第一個不是允許字元就停止
             break
     else:
-        # 字串全部都是允許字元
         i += 1
 
     expr = "".join(expr_chars).strip()
-    # 如果第一個字就不是允許字元，expr 會是空
     if not expr or not any(c.isdigit() for c in expr):
         raise ValueError("no numeric expr")
 
-    memo = s[len(expr):].strip()  # 後面全部當備註
+    memo = s[len(expr):].strip()
     delta = safe_eval_expr(expr)
     return delta, memo or None
+
 
 
 app = Flask(__name__)
