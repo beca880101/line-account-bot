@@ -26,10 +26,11 @@ allowed_unary = {
     ast.USub: op.neg,
 }
 
+
 def safe_eval_expr(expr: str) -> float:
     """
     安全地計算類似：-200*24.5-100*20 這種算式
-    只允許：數字、+ - * /、括號
+    只允許：數字、+ - * /、括號、小數點
     解析失敗會丟出 ValueError
     """
     expr = expr.replace(" ", "")
@@ -53,6 +54,43 @@ def safe_eval_expr(expr: str) -> float:
     return float(_eval(tree.body))
 
 
+def parse_expr_and_memo(raw: str):
+    """
+    模式 B：數字 / 算式直接接文字
+    例：
+      +200牛肉麵
+      -50交通費
+      -200*24.5-100*20晚餐
+    前面連續的 +-*/().0-9 視為算式，後面全部是備註
+    回傳：(delta: float, memo: str|None)
+    """
+    s = raw.strip()
+    if not s:
+        raise ValueError("empty")
+
+    allowed_chars = set("0123456789.+-*/()")
+    expr_chars = []
+    i = 0
+    for i, ch in enumerate(s):
+        if ch in allowed_chars:
+            expr_chars.append(ch)
+        else:
+            # 第一個不是允許字元就停止
+            break
+    else:
+        # 字串全部都是允許字元
+        i += 1
+
+    expr = "".join(expr_chars).strip()
+    # 如果第一個字就不是允許字元，expr 會是空
+    if not expr or not any(c.isdigit() for c in expr):
+        raise ValueError("no numeric expr")
+
+    memo = s[len(expr):].strip()  # 後面全部當備註
+    delta = safe_eval_expr(expr)
+    return delta, memo or None
+
+
 app = Flask(__name__)
 
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
@@ -70,7 +108,7 @@ def format_group_balance(balance: float) -> str:
     if balance > 0:
         return f"目前小朋友欠 {balance} 台幣。"
     elif balance < 0:
-        return f"目前欠小朋友 {abs(balance)} 台幣。"
+        return f"目前姐姐欠小朋友 {abs(balance)} 台幣。"
     else:
         return "目前互不相欠 ✨"
 
@@ -97,7 +135,8 @@ def build_settle_flex(
     delta: float,
     total: float,
     unit: str = "台幣",
-    current_label: str = "目前欠款"
+    current_label: str = "目前欠款",
+    memo: str | None = None
 ):
     """結算結果小卡片"""
     prev_amount = round(prev_amount, 2)
@@ -106,6 +145,8 @@ def build_settle_flex(
 
     sign = "+" if delta >= 0 else "-"
     delta_abs = abs(delta)
+
+    memo_text = f"備註：{memo}" if memo else "備註："
 
     return FlexSendMessage(
         alt_text="計算結果",
@@ -190,9 +231,10 @@ def build_settle_flex(
                     },
                     {
                         "type": "text",
-                        "text": "備註",
+                        "text": memo_text,
                         "size": "xs",
-                        "color": "#B0BEC5"
+                        "color": "#B0BEC5",
+                        "wrap": True
                     }
                 ]
             }
@@ -236,29 +278,29 @@ def handle_message(event):
             return
 
         # 清零
-        if text in ["清零", "reset"]:
+        if text in ["清帳", "reset"]:
             ga["balance"] = 0.0
             line_bot_api.reply_message(
                 event.reply_token,
-                TextSendMessage(text="已清零。\n" + format_group_balance(ga["balance"]))
+                TextSendMessage(text="已清帳。\n" + format_group_balance(ga["balance"]))
             )
             return
 
-        # 試著把整句當算式計算
+        # 試著當「算式 + 備註」解析
         try:
-            delta = safe_eval_expr(text)   # float，可正可負
+            delta, memo = parse_expr_and_memo(text)   # float，可正可負
         except Exception:
             # 不是算式 → 只有主動要說明才回
             if text in HELP_KEYWORDS:
                 help_text = (
                     "👭 雙人記帳機器人使用說明（姐姐 / 小朋友）：\n"
                     "綁定：\n 姐姐→我是姐姐\n 小朋友→我是小朋友\n\n"
-                    "記帳：可以直接輸入金額或算式，例如：\n"
-                    "+100\n-50\n-200*24.5-100*20\n\n"
+                    "記帳：可以直接輸入金額或算式＋備註，例如：\n"
+                    "+200牛肉麵\n-50交通\n-200*24.5-100*20晚餐\n\n"
                     "規則：\n"
                     "  結果 > 0：小朋友欠姐姐\n"
                     "  結果 < 0：姐姐欠小朋友\n\n"
-                    "查餘額：餘額\n清零：清零\n查 userId：/id"
+                    "查餘額：餘額\n清帳：清帳\n查 userId：/id"
                 )
                 line_bot_api.reply_message(event.reply_token, TextSendMessage(text=help_text))
             return
@@ -280,7 +322,7 @@ def handle_message(event):
         if new_bal > 0:
             label = "目前小朋友欠"
         elif new_bal < 0:
-            label = "目前欠小朋友"
+            label = "目前姐姐欠小朋友"
         else:
             label = "目前互不相欠"
 
@@ -289,7 +331,8 @@ def handle_message(event):
             delta=delta,
             total=new_bal,
             unit="台幣",
-            current_label=label
+            current_label=label,
+            memo=memo
         )
         line_bot_api.reply_message(event.reply_token, flex)
         return
@@ -299,16 +342,16 @@ def handle_message(event):
         uid = event.source.user_id
         user_balances.setdefault(uid, 0.0)
 
-        # 先當算式處理（+100, -30, 100*3-50 都可以）
+        # 先當 算式 + 備註 處理（+100牛肉麵, 100*3飲料）
         try:
-            delta = safe_eval_expr(text)
+            delta, memo = parse_expr_and_memo(text)
         except Exception:
-            # 使用者主動要說明才回
+            # 使用者主動要說明才回；或查餘額
             if text in HELP_KEYWORDS:
                 help_text = (
                     "📒 個人記帳：\n"
-                    "直接輸入金額或算式即可，例如：\n"
-                    "+100\n-30\n100*3-50\n\n"
+                    "直接輸入金額或算式＋備註即可，例如：\n"
+                    "+100午餐\n-30交通\n100*3飲料\n\n"
                     "查餘額：餘額 或 balance\n"
                     "/id：查看你的 userId\n\n"
                     "👭 若要群組記帳，把我拉進群組再照『姐姐 / 小朋友』說明操作。"
@@ -330,7 +373,8 @@ def handle_message(event):
             delta=delta,
             total=new_bal,
             unit="台幣",
-            current_label="目前餘額"
+            current_label="目前餘額",
+            memo=memo
         )
         line_bot_api.reply_message(event.reply_token, flex)
         return
@@ -339,3 +383,4 @@ def handle_message(event):
 if __name__ == "__main__":
     # 本機測試用；在 Render 上會用 gunicorn 啟動
     app.run(host="0.0.0.0", port=8000)
+
