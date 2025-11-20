@@ -123,8 +123,10 @@ def index():
     return "Line accounting bot is running."
 
 
-@app.route("/callback", methods=['POST'])
+@app.route("/callback", methods=['POST', 'HEAD'])
 def callback():
+    if request.method == 'HEAD':
+        return ('', 200)  # 順利回應 HEAD 請求，防止 UptimeRobot 出現錯誤
     signature = request.headers.get('X-Line-Signature')
     body = request.get_data(as_text=True)
     try:
@@ -132,6 +134,7 @@ def callback():
     except InvalidSignatureError:
         abort(400)
     return 'OK'
+
 
 
 def build_settle_flex(
