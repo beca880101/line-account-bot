@@ -31,17 +31,14 @@ def get_worksheet():
         return None
     
     try:
-        # 嘗試解析 JSON 金鑰
         creds_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
         
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
         
-        # 嘗試打開試算表
         sheet = client.open(GOOGLE_SHEET_NAME).sheet1
         
-        # 初始化標題列（如果工作表為空）
         if not sheet.get_all_values():
             sheet.append_row(["時間", "使用者ID", "群組ID", "金額", "備註", "原始指令"])
             
@@ -49,7 +46,6 @@ def get_worksheet():
     
     except json.JSONDecodeError as e:
         print(f"致命錯誤：GOOGLE_CREDENTIALS_JSON 格式錯誤 (請確保是單行文字): {e}") 
-        # 由於這是致命錯誤，回傳 None 並讓錯誤在 handle_message 中處理
         return None
     except gspread.exceptions.SpreadsheetNotFound:
         print(f"致命錯誤：找不到試算表，請檢查名稱是否正確: {GOOGLE_SHEET_NAME}")
@@ -101,7 +97,6 @@ def record_transaction(user_id, group_id, amount, memo, raw_text):
     sheet = get_worksheet()
     if sheet:
         dt = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        # 寫入資料：時間, 使用者ID, 群組ID (私聊時為Private), 金額, 備註, 原始指令
         sheet.append_row([dt, user_id, group_id or "Private", amount, memo, raw_text])
 
 def get_filtered_transactions(user_id=None, group_id=None, time_filter=None):
@@ -112,7 +107,6 @@ def get_filtered_transactions(user_id=None, group_id=None, time_filter=None):
     rows = sheet.get_all_records()
     filtered_list = []
     
-    # 從最新的一筆開始篩選 (假設資料是按時間順序寫入)
     for row in reversed(rows): 
         r_time = str(row.get("時間", ""))
         r_gid = str(row.get("群組ID", ""))
@@ -120,11 +114,9 @@ def get_filtered_transactions(user_id=None, group_id=None, time_filter=None):
         r_amt = row.get("金額", 0)
         r_memo = str(row.get("備註", ""))
 
-        # 1. 時間篩選 (例如: 2025-11)
         if time_filter and not r_time.startswith(time_filter):
             continue
 
-        # 2. 來源篩選
         target = False
         if group_id and r_gid == group_id:
             target = True
@@ -138,7 +130,6 @@ def get_filtered_transactions(user_id=None, group_id=None, time_filter=None):
                 "memo": r_memo
             })
             
-    # filtered_list 已經是最新在前的順序
     return filtered_list
 
 # === Flex Message 建立器 (顯示近 10 筆表格) ===
@@ -147,7 +138,7 @@ def build_recent_transactions_flex(records: list):
     """根據紀錄列表建立一個模擬表格的 Flex Message (Bubble Type)"""
     contents = []
     
-    # 1. Header Row
+    # Header Row
     header = BoxComponent(
         layout='horizontal', spacing='sm', margin='sm',
         contents=[
@@ -159,10 +150,10 @@ def build_recent_transactions_flex(records: list):
     contents.append(header)
     contents.append(SeparatorComponent(margin='xs'))
     
-    # 2. Data Rows
+    # Data Rows
     for record in records:
-        date_short = record["time"][5:10] # 擷取 MM-DD 格式
-        amount_str = f"{record['amount']:,.0f}" # 格式化金額
+        date_short = record["time"][5:10]
+        amount_str = f"{record['amount']:,.0f}" 
         
         row = BoxComponent(
             layout='horizontal', spacing='sm', margin='xs',
@@ -194,6 +185,55 @@ def build_recent_transactions_flex(records: list):
     )
     return FlexSendMessage(alt_text="最近記帳紀錄", contents=flex_content)
 
+# === 新增：記帳成功確認 Flex Message ===
+
+def build_transaction_confirm_flex(delta, memo, new_bal):
+    """建立記帳成功後回覆的 Flex Message (漂亮的對話框)"""
+    
+    # 設定交易金額的顏色
+    amount_color = "#38761d" if delta > 0 else "#cc0000"
+    
+    flex_content = BubbleContainer(
+        body=BoxComponent(
+            layout='vertical',
+            contents=[
+                TextComponent(
+                    text="✅ 記帳成功！",
+                    weight='bold', size='xl', color='#1DB446'
+                ),
+                SeparatorComponent(margin='md'),
+                
+                # 交易金額
+                BoxComponent(
+                    layout='horizontal', margin='sm',
+                    contents=[
+                        TextComponent(text='交易金額：', size='md', color='#555555', flex=3),
+                        TextComponent(text=f"{round(delta, 2)} 元", size='lg', color=amount_color, flex=5, align='end', weight='bold')
+                    ]
+                ),
+                # 備註
+                BoxComponent(
+                    layout='horizontal', margin='sm',
+                    contents=[
+                        TextComponent(text='備註：', size='sm', color='#555555', flex=2),
+                        TextComponent(text=memo, size='sm', color='#333333', flex=6, wrap=True, align='end')
+                    ]
+                ),
+                SeparatorComponent(margin='lg'),
+                # 目前累積
+                BoxComponent(
+                    layout='horizontal', margin='sm',
+                    contents=[
+                        TextComponent(text='累積總額：', size='lg', color='#555555', flex=3, weight='bold'),
+                        TextComponent(text=f"{round(new_bal, 2)} 元", size='xl', color='#000000', flex=5, align='end', weight='bold')
+                    ]
+                )
+            ]
+        )
+    )
+    return FlexSendMessage(alt_text="記帳成功", contents=flex_content)
+
+
 # === LINE Bot 處理 ===
 
 @app.route("/callback", methods=['POST'])
@@ -212,13 +252,10 @@ def callback():
 def handle_message(event):
     text = event.message.text.strip()
     uid = event.source.user_id
-    # 在群組時為 group_id，私聊時為 None
     gid = event.source.group_id if event.source.type == "group" else None 
     
-    # 取得 Google Sheet 物件，並處理連線失敗的狀況
     sheet = get_worksheet()
     if not sheet:
-        # 如果連線失敗，回覆錯誤訊息
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text="Google Sheets 連線失敗，請檢查 Render Log 或環境變數設定！"))
         return
 
@@ -231,25 +268,16 @@ def handle_message(event):
     if text.lower() in ["報表", "report", "excel"]:
         
         current_month = datetime.datetime.now().strftime("%Y-%m")
-        # 取得本月所有紀錄 (最新在最前)
         all_month_records = get_filtered_transactions(user_id=uid, group_id=gid, time_filter=current_month)
         
         if not all_month_records:
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text="本月尚無紀錄！"))
             return
             
-        # 1. 總計月金額
         monthly_total = sum(r['amount'] for r in all_month_records)
-        
-        # 2. 取得最近 10 筆 (直接取前 10 個)
         recent_10_records = all_month_records[:10]
         
-        # --- 建立回覆訊息 ---
-        
-        # 訊息 1: 近 10 筆表格 (Flex Message)
         flex_message = build_recent_transactions_flex(recent_10_records)
-        
-        # 訊息 2: 月總結和連結 (Text Message)
         sheet_url = "https://docs.google.com/spreadsheets/d/" + sheet.spreadsheet.id
         msg_summary = (
             f"💰 {current_month} 月總結\n"
@@ -259,27 +287,20 @@ def handle_message(event):
         )
         text_message = TextSendMessage(text=msg_summary)
         
-        # 發送多個訊息
         line_bot_api.reply_message(event.reply_token, [flex_message, text_message])
         return
         
     # 指令：餘額 (包含「小朋友欠」邏輯)
     if text in ["餘額", "balance"]:
-        # 取得目前累積總額
         bal = sum(r['amount'] for r in get_filtered_transactions(user_id=uid, group_id=gid))
-        
-        # 將總額取到小數點第二位
         rounded_bal = round(bal, 2)
         
         if rounded_bal > 0:
-            # 正數 -> 小朋友欠錢
-            # 使用 abs() 確保顯示的是正數金額
             msg_text = (
                 f"📊 目前總累積：{rounded_bal} 元\n"
                 f"👉 依據慣例，目前小朋友欠 {abs(rounded_bal)} 元"
             )
         elif rounded_bal < 0:
-            # 負數 -> 欠小朋友錢
             msg_text = (
                 f"📊 目前總累積：{rounded_bal} 元\n"
                 f"👉 依據慣例，目前欠小朋友 {abs(rounded_bal)} 元"
@@ -300,9 +321,9 @@ def handle_message(event):
         # 2. 重新計算總額
         new_bal = sum(r['amount'] for r in get_filtered_transactions(user_id=uid, group_id=gid))
         
-        # 3. 回覆
-        msg_text = f"✅ 已記錄：{delta}\n備註：{memo}\n目前累積：{round(new_bal, 2)} 台幣"
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=msg_text))
+        # 3. 回覆：使用 Flex Message
+        flex_message = build_transaction_confirm_flex(delta, memo, new_bal)
+        line_bot_api.reply_message(event.reply_token, flex_message)
 
     except ValueError:
         # 非記帳指令，且非特殊指令，則回覆說明
@@ -314,11 +335,10 @@ def handle_message(event):
                 "3. 餘額：輸入 **餘額** 查詢目前累積和積欠狀況\n"
             )
              line_bot_api.reply_message(event.reply_token, TextSendMessage(text=help_text))
-        pass # 其他無法解析的文字訊息不回覆
+        pass
 
     except Exception as e:
         print(f"處理訊息時發生未預期錯誤: {e}")
-        # 這裡不回覆給用戶，避免洩露內部錯誤細節
         pass
 
 
