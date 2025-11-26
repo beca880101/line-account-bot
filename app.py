@@ -8,7 +8,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
-from linebot.models import MessageEvent, TextMessage, TextSendMessage, FlexSendMessage, BubbleContainer, BoxComponent, TextComponent, SeparatorComponent
+from linebot.models import MessageEvent, TextMessage, TextSendMessage, FlexSendMessage, BubbleContainer, BoxComponent, TextComponent, SeparatorComponent, Color
 
 # ===== 環境變數讀取與設定 =====
 LINE_CHANNEL_SECRET = os.environ.get("LINE_CHANNEL_SECRET")
@@ -39,6 +39,7 @@ def get_worksheet():
         
         sheet = client.open(GOOGLE_SHEET_NAME).sheet1
         
+        # 初始化標題列（如果工作表為空）
         if not sheet.get_all_values():
             sheet.append_row(["時間", "使用者ID", "群組ID", "金額", "備註", "原始指令"])
             
@@ -90,13 +91,17 @@ def parse_expr_and_memo(raw: str):
     delta = safe_eval_expr(expr)
     return delta, memo or "無備註"
 
-# === 讀取與寫入邏輯 ===
+# === 讀取與寫入邏輯 (修復時區) ===
 
 def record_transaction(user_id, group_id, amount, memo, raw_text):
-    """將交易寫入 Google Sheet"""
+    """將交易寫入 Google Sheet (已修復時區)"""
     sheet = get_worksheet()
     if sheet:
-        dt = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        # 設置台灣標準時間 (UTC+8)
+        tz_utc_8 = datetime.timezone(datetime.timedelta(hours=8))
+        dt = datetime.datetime.now(tz_utc_8).strftime("%Y-%m-%d %H:%M:%S")
+        
+        # 寫入資料：時間, 使用者ID, 群組ID (私聊時為Private), 金額, 備註, 原始指令
         sheet.append_row([dt, user_id, group_id or "Private", amount, memo, raw_text])
 
 def get_filtered_transactions(user_id=None, group_id=None, time_filter=None):
@@ -109,7 +114,8 @@ def get_filtered_transactions(user_id=None, group_id=None, time_filter=None):
     
     for row in reversed(rows): 
         r_time = str(row.get("時間", ""))
-        r_gid = str(row.get("群組ID", ""))
+        # 這裡使用 get("群組ID", "Private") 確保舊資料或未填寫時，預設為 Private
+        r_gid = str(row.get("群組ID", "") or "Private") 
         r_uid = str(row.get("使用者ID", ""))
         r_amt = row.get("金額", 0)
         r_memo = str(row.get("備註", ""))
@@ -118,21 +124,32 @@ def get_filtered_transactions(user_id=None, group_id=None, time_filter=None):
             continue
 
         target = False
+        # Group logic: Must match the group ID (only occurs if gid is not None)
         if group_id and r_gid == group_id:
             target = True
+        # Private logic: Must match the user ID AND the group ID must be the private tag ("Private" or empty/default)
         elif user_id and r_uid == user_id and (r_gid == "Private" or r_gid == ""):
+            # Note: The code always writes "Private" for private chat now, 
+            # but we keep "" for backward compatibility with old data.
             target = True
-            
+
         if target:
+            try:
+                # 確保金額是數字
+                amount = float(r_amt)
+            except (TypeError, ValueError):
+                # 如果金額不是有效數字，跳過該行
+                continue
+                
             filtered_list.append({
                 "time": r_time, 
-                "amount": float(r_amt), 
+                "amount": amount, 
                 "memo": r_memo
             })
             
     return filtered_list
 
-# === Flex Message 建立器 (顯示近 10 筆表格) ===
+# === Flex Message 建立器 (顯示近 10 筆表格) (保持不變) ===
 
 def build_recent_transactions_flex(records: list):
     """根據紀錄列表建立一個模擬表格的 Flex Message (Bubble Type)"""
@@ -185,53 +202,67 @@ def build_recent_transactions_flex(records: list):
     )
     return FlexSendMessage(alt_text="最近記帳紀錄", contents=flex_content)
 
-# === 新增：記帳成功確認 Flex Message ===
+# === 記帳成功確認 Flex Message (恢復成舊版詳細格式) ===
 
-def build_transaction_confirm_flex(delta, memo, new_bal):
-    """建立記帳成功後回覆的 Flex Message (漂亮的對話框)"""
+def build_transaction_confirm_flex(delta, memo, previous_bal, new_bal):
+    """建立記帳成功後回覆的 Flex Message (含上次累積、本次交易、目前累積)"""
     
-    # 設定交易金額的顏色
-    amount_color = "#38761d" if delta > 0 else "#cc0000"
-    
+    delta_color = "#38761d" if delta >= 0 else "#cc0000"
+    new_bal_color = "#1DB446" if new_bal >= 0 else "#cc0000"
+
+    # 格式化金額
+    format_amount = lambda x: f"{round(x, 2):,}"
+
     flex_content = BubbleContainer(
         body=BoxComponent(
             layout='vertical',
             contents=[
                 TextComponent(
-                    text="✅ 記帳成功！",
+                    text="記帳成功!",
                     weight='bold', size='xl', color='#1DB446'
                 ),
                 SeparatorComponent(margin='md'),
                 
-                # 交易金額
-                BoxComponent(
-                    layout='horizontal', margin='sm',
-                    contents=[
-                        TextComponent(text='交易金額：', size='md', color='#555555', flex=3),
-                        TextComponent(text=f"{round(delta, 2)} 元", size='lg', color=amount_color, flex=5, align='end', weight='bold')
-                    ]
-                ),
                 # 備註
                 BoxComponent(
                     layout='horizontal', margin='sm',
                     contents=[
-                        TextComponent(text='備註：', size='sm', color='#555555', flex=2),
+                        TextComponent(text='備註：', size='sm', color='#555555', flex=2, weight='bold'),
                         TextComponent(text=memo, size='sm', color='#333333', flex=6, wrap=True, align='end')
                     ]
                 ),
-                SeparatorComponent(margin='lg'),
-                # 目前累積
+                SeparatorComponent(margin='lg', color='#CCCCCC'),
+                
+                # 上次累積
                 BoxComponent(
                     layout='horizontal', margin='sm',
                     contents=[
-                        TextComponent(text='累積總額：', size='lg', color='#555555', flex=3, weight='bold'),
-                        TextComponent(text=f"{round(new_bal, 2)} 元", size='xl', color='#000000', flex=5, align='end', weight='bold')
+                        TextComponent(text='上次累積：', size='md', color='#888888', flex=5),
+                        TextComponent(text=f"{format_amount(previous_bal)} 元", size='md', color='#888888', flex=4, align='end', weight='bold')
+                    ]
+                ),
+                # 本次交易
+                BoxComponent(
+                    layout='horizontal', margin='sm',
+                    contents=[
+                        TextComponent(text='本次交易：', size='md', color='#555555', flex=5),
+                        TextComponent(text=f"{format_amount(delta)} 元", size='lg', color=delta_color, flex=4, align='end', weight='bold')
+                    ]
+                ),
+                SeparatorComponent(margin='lg', color='#CCCCCC'),
+                
+                # 目前累積 (計算結果)
+                BoxComponent(
+                    layout='horizontal', margin='sm',
+                    contents=[
+                        TextComponent(text='目前累積：', size='lg', color='#333333', flex=5, weight='bold'),
+                        TextComponent(text=f"{format_amount(new_bal)} 元", size='xl', color=new_bal_color, flex=4, align='end', weight='bold')
                     ]
                 )
             ]
         )
     )
-    return FlexSendMessage(alt_text="記帳成功", contents=flex_content)
+    return FlexSendMessage(alt_text="記帳成功確認", contents=flex_content)
 
 
 # === LINE Bot 處理 ===
@@ -252,6 +283,7 @@ def callback():
 def handle_message(event):
     text = event.message.text.strip()
     uid = event.source.user_id
+    # 在群組時為 group_id，私聊時為 None
     gid = event.source.group_id if event.source.type == "group" else None 
     
     sheet = get_worksheet()
@@ -267,7 +299,7 @@ def handle_message(event):
     # 指令：報表 / Report
     if text.lower() in ["報表", "report", "excel"]:
         
-        current_month = datetime.datetime.now().strftime("%Y-%m")
+        current_month = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))).strftime("%Y-%m")
         all_month_records = get_filtered_transactions(user_id=uid, group_id=gid, time_filter=current_month)
         
         if not all_month_records:
@@ -297,13 +329,13 @@ def handle_message(event):
         
         if rounded_bal > 0:
             msg_text = (
-                f"📊 目前總累積：{rounded_bal} 元\n"
-                f"👉 依據慣例，目前小朋友欠 {abs(rounded_bal)} 元"
+                f"📊 目前總累積：{rounded_bal:,.2f} 元\n"
+                f"👉 依據慣例，目前小朋友欠 {abs(rounded_bal):,.2f} 元"
             )
         elif rounded_bal < 0:
             msg_text = (
-                f"📊 目前總累積：{rounded_bal} 元\n"
-                f"👉 依據慣例，目前欠小朋友 {abs(rounded_bal)} 元"
+                f"📊 目前總累積：{rounded_bal:,.2f} 元\n"
+                f"👉 依據慣例，目前欠小朋友 {abs(rounded_bal):,.2f} 元"
             )
         else:
             msg_text = "目前總累積：0 元 (沒有積欠)"
@@ -315,14 +347,17 @@ def handle_message(event):
     try:
         delta, memo = parse_expr_and_memo(text)
         
-        # 1. 寫入 Google Sheet (永久保存)
+        # 1. 計算上次累積 (在本次交易前)
+        previous_bal = sum(r['amount'] for r in get_filtered_transactions(user_id=uid, group_id=gid))
+        
+        # 2. 計算本次累積
+        new_bal = previous_bal + delta
+        
+        # 3. 寫入 Google Sheet (永久保存)
         record_transaction(uid, gid, delta, memo, text)
         
-        # 2. 重新計算總額
-        new_bal = sum(r['amount'] for r in get_filtered_transactions(user_id=uid, group_id=gid))
-        
-        # 3. 回覆：使用 Flex Message
-        flex_message = build_transaction_confirm_flex(delta, memo, new_bal)
+        # 4. 回覆：使用恢復後的 Flex Message
+        flex_message = build_transaction_confirm_flex(delta, memo, previous_bal, new_bal)
         line_bot_api.reply_message(event.reply_token, flex_message)
 
     except ValueError:
