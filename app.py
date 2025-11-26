@@ -266,43 +266,136 @@ def calc_balance(user_id, group_id):
 # ================================================================
 #  Flex 卡片：記帳成功的小卡
 # ================================================================
-def build_transaction_flex(expr_str, memo, total):
-    total_str = f"{total:.2f}".rstrip("0").rstrip(".")
+def build_settle_flex(
+    prev_amount: float,
+    delta: float,
+    total: float,
+    unit: str = "台幣",
+    current_label: str = "目前餘額",
+    memo: str = None
+):
+    """
+    回到你一開始那張「計算結果」卡片的樣式：
+    - 標題：綠色「計算結果」
+    - 右上角：+100 = 100 這種格式
+    - 三行：上次金額 / 本次金額 / 目前餘額(或目前小朋友欠…)
+    - 下方：備註：
+    """
+
+    # 數值整理成比較好看的格式（去掉多餘 .0）
+    prev_amount_val = float(prev_amount)
+    delta_val = float(delta)
+    total_val = float(total)
+
+    sign = "+" if delta_val >= 0 else "-"
+    delta_abs = abs(delta_val)
+
+    # 顯示用的字串（避免 100.0 看起來太醜，用 g 去掉多餘小數）
+    prev_str = f"{prev_amount_val:g} {unit}"
+    delta_str = f"{delta_abs:g} {unit}"
+    total_str = f"{abs(total_val):g} {unit}"
+    expr_str = f"{sign}{delta_abs:g} = {total_val:g}"
+
+    # 備註
+    memo_text = f"備註：{memo}" if memo else "備註："
+
+    flex_content = {
+        "type": "bubble",
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "md",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": "計算結果",
+                    "weight": "bold",
+                    "size": "lg",
+                    "color": "#2E7D32"
+                },
+                {
+                    "type": "text",
+                    "text": expr_str,
+                    "size": "sm",
+                    "color": "#8D6E63",
+                    "align": "end"
+                },
+                {
+                    "type": "separator",
+                    "margin": "md"
+                },
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "margin": "md",
+                    "spacing": "sm",
+                    "contents": [
+                        {
+                            "type": "box",
+                            "layout": "horizontal",
+                            "contents": [
+                                {"type": "text", "text": "上次金額", "size": "sm"},
+                                {
+                                    "type": "text",
+                                    "text": prev_str,
+                                    "size": "sm",
+                                    "align": "end",
+                                    "color": "#8D6E63"
+                                }
+                            ]
+                        },
+                        {
+                            "type": "box",
+                            "layout": "horizontal",
+                            "contents": [
+                                {"type": "text", "text": "本次金額", "size": "sm"},
+                                {
+                                    "type": "text",
+                                    "text": delta_str,
+                                    "size": "sm",
+                                    "align": "end",
+                                    "color": "#8D6E63"
+                                }
+                            ]
+                        },
+                        {
+                            "type": "box",
+                            "layout": "horizontal",
+                            "contents": [
+                                {
+                                    "type": "text",
+                                    "text": current_label,
+                                    "size": "sm",
+                                },
+                                {
+                                    "type": "text",
+                                    "text": total_str,
+                                    "size": "sm",
+                                    "align": "end",
+                                    "color": "#8D6E63"
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "separator",
+                    "margin": "md"
+                },
+                {
+                    "type": "text",
+                    "text": memo_text,
+                    "size": "xs",
+                    "color": "#B0BEC5",
+                    "wrap": True
+                }
+            ]
+        }
+    }
+
     return FlexSendMessage(
-        alt_text="記帳成功",
-        contents={
-            "type": "bubble",
-            "body": {
-                "type": "box",
-                "layout": "vertical",
-                "spacing": "md",
-                "contents": [
-                    {
-                        "type": "text",
-                        "text": "記帳成功",
-                        "weight": "bold",
-                        "size": "lg",
-                    },
-                    {
-                        "type": "text",
-                        "text": f"本次：{expr_str}",
-                        "size": "sm",
-                    },
-                    {
-                        "type": "text",
-                        "text": f"備註：{memo}",
-                        "size": "sm",
-                        "wrap": True,
-                    },
-                    {
-                        "type": "text",
-                        "text": f"目前總額：{total_str} 元",
-                        "size": "md",
-                        "weight": "bold",
-                    },
-                ],
-            },
-        },
+        alt_text="計算結果",
+        contents=flex_content
     )
 
 
