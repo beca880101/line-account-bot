@@ -8,7 +8,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
-from linebot.models import MessageEvent, TextMessage, TextSendMessage, FlexSendMessage, BubbleContainer, BoxComponent, TextComponent, SeparatorComponent, Color
+from linebot.models import MessageEvent, TextMessage, TextSendMessage, FlexSendMessage, BubbleContainer, BoxComponent, TextComponent, SeparatorComponent
 
 # ===== 環境變數讀取與設定 =====
 LINE_CHANNEL_SECRET = os.environ.get("LINE_CHANNEL_SECRET")
