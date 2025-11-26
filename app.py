@@ -235,7 +235,15 @@ def calc_balance(user_id, group_id):
 # ================================================================
 #  Flex：記帳成功卡片
 # ================================================================
-def build_settle_flex(prev_amount, delta, total, unit="台幣", current_label="目前欠款", memo=None):
+def build_settle_flex(
+    prev_amount: float,
+    delta: float,
+    total: float,
+    unit: str = "台幣",
+    current_label: str = "目前欠款",
+    memo: str | None = None
+):
+    """結算結果小卡片"""
     prev_amount = round(prev_amount, 2)
     delta = round(delta, 2)
     total = round(total, 2)
@@ -254,12 +262,28 @@ def build_settle_flex(prev_amount, delta, total, unit="台幣", current_label="�
                 "layout": "vertical",
                 "spacing": "md",
                 "contents": [
-                    {"type": "text", "text": "計算結果", "weight": "bold", "size": "lg", "color": "#2E7D32"},
-                    {"type": "text", "text": f"{sign}{delta_abs} = {total}", "size": "sm", "color": "#8D6E63", "align": "end"},
-                    {"type": "separator", "margin": "md"},
+                    {
+                        "type": "text",
+                        "text": "計算結果",
+                        "weight": "bold",
+                        "size": "lg",
+                        "color": "#2E7D32"
+                    },
+                    {
+                        "type": "text",
+                        "text": f"{sign}{delta_abs} = {total}",
+                        "size": "sm",
+                        "color": "#8D6E63",
+                        "align": "end"
+                    },
+                    {
+                        "type": "separator",
+                        "margin": "md"
+                    },
                     {
                         "type": "box",
                         "layout": "vertical",
+                        "margin": "md",          # 👈 多這行，跟你原來版本一樣
                         "spacing": "sm",
                         "contents": [
                             {
@@ -267,34 +291,60 @@ def build_settle_flex(prev_amount, delta, total, unit="台幣", current_label="�
                                 "layout": "horizontal",
                                 "contents": [
                                     {"type": "text", "text": "上次金額", "size": "sm"},
-                                    {"type": "text", "text": f"{prev_amount} {unit}", "size": "sm", "align": "end", "color": "#8D6E63"},
-                                ],
+                                    {
+                                        "type": "text",
+                                        "text": f"{prev_amount} {unit}",
+                                        "size": "sm",
+                                        "align": "end",
+                                        "color": "#8D6E63"
+                                    }
+                                ]
                             },
                             {
                                 "type": "box",
                                 "layout": "horizontal",
                                 "contents": [
                                     {"type": "text", "text": "本次金額", "size": "sm"},
-                                    {"type": "text", "text": f"{delta} {unit}", "size": "sm", "align": "end", "color": "#8D6E63"},
-                                ],
+                                    {
+                                        "type": "text",
+                                        "text": f"{delta} {unit}",
+                                        "size": "sm",
+                                        "align": "end",
+                                        "color": "#8D6E63"
+                                    }
+                                ]
                             },
                             {
                                 "type": "box",
                                 "layout": "horizontal",
                                 "contents": [
-                                    {"type": "text", "text": current_label, "size": "sm"},
-                                    {"type": "text", "text": f"{total} {unit}", "size": "sm", "align": "end", "color": "#8D6E63"},
-                                ],
-                            },
-                        ],
+                                    {"type": "text", "text": "目前欠款", "size": "sm"},
+                                    {
+                                        "type": "text",
+                                        "text": f"{total} {unit}",
+                                        "size": "sm",
+                                        "align": "end",
+                                        "color": "#8D6E63"
+                                    }
+                                ]
+                            }
+                        ]
                     },
-                    {"type": "separator", "margin": "md"},
-                    {"type": "text", "text": memo_text, "size": "xs", "color": "#B0BEC5", "wrap": True},
-                ],
-            },
+                    {
+                        "type": "separator",
+                        "margin": "md"
+                    },
+                    {
+                        "type": "text",
+                        "text": memo_text,
+                        "size": "xs",
+                        "color": "#B0BEC5",
+                        "wrap": True
+                    }
+                ]
+            }
         },
     )
-
 
 # ================================================================
 #  Flex：近 10 筆報表
